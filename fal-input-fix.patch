@@ -1,0 +1,28 @@
+diff --git a/backend/app/providers/fal.py b/backend/app/providers/fal.py
+index 045086e..cb8ce9e 100644
+--- a/backend/app/providers/fal.py
++++ b/backend/app/providers/fal.py
+@@ -96,9 +96,11 @@ class FalProvider(Provider):
+         """(request_id, status_url) 반환. submit 자체는 과금 발생."""
+         endpoint, build_input = self._model(kind)
+         with self._client(timeout=30) as c:
++            # FAL queue REST는 모델 입력을 body 최상위에 직접 받는다.
++            # {"input": ...} 래퍼를 쓰면 422가 나올 수 있음.
+             r = c.post(f"{QUEUE_BASE}/{endpoint}",
+                        headers=self._headers(),
+-                       json={"input": build_input(params or {})})
++                       json=build_input(params or {}))
+         if r.status_code not in (200, 201, 202):
+             raise RuntimeError(f"FAL submit failed {r.status_code}: {r.text[:300]}")
+         data = r.json()
+@@ -125,7 +127,9 @@ class FalProvider(Provider):
+             # 결과 조회 (status_url → response_url 규칙)
+             result_url = status_url.replace("/status", "")
+             rr = c.get(result_url, headers=self._headers())
+-            rr.raise_for_status()
++            if rr.status_code != 200:
++                raise RuntimeError(
++                    f"FAL result fetch failed {rr.status_code}: {rr.text[:500]}")
+             out = rr.json()
+         # 호출자 귀책 실패는 detail에 담겨 옴 — URL보다 먼저 확인
+         if isinstance(out, dict) and out.get("detail"):
