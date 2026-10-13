@@ -7,6 +7,7 @@ import os
 import secrets
 
 from fastapi import FastAPI, Depends, Header, HTTPException, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -20,10 +21,29 @@ DEV_AUTH = os.environ.get("DEV_AUTH", "1") == "1"
 
 app = FastAPI(title="AI Video SaaS Core", version="0.1.0")
 
+# Lovable 등 별도 오리진 프론트에서 호출하므로 CORS 허용.
+# 운영에서는 CORS_ORIGINS에 실제 프론트 도메인만 지정.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 @app.on_event("startup")
 def _startup():
     init_db()
+    # Render 무료 티어처럼 프로세스 1개만 되는 환경 대응:
+    # 워커를 API 프로세스 안의 데몬 스레드로 함께 기동.
+    # RUN_WORKER=0 이면 끄고 별도 프로세스(python -m app.worker)로 실행.
+    if os.environ.get("RUN_WORKER", "1") == "1":
+        import threading
+        from .worker import main as worker_main
+        t = threading.Thread(target=worker_main, daemon=True, name="job-worker")
+        t.start()
+        log.info("in-process job worker started")
 
 
 def get_user(email: str | None, db: Session) -> models.User:
@@ -86,8 +106,8 @@ def list_jobs(user: models.User = Depends(current_user), db: Session = Depends(g
         models.Job.id.desc()).limit(50).all()
     return [{"id": j.id, "kind": j.kind, "status": j.status,
              "output_url": j.output_url, "error": j.error,
-             "created_at": j.created_at.isoformat() if j.created_at else None} for j in jobs]
-             "created_at": j.created_at.isoformat() if j.created_at else None,"params": json.loads(j.params_json or "{}")} for j in jobs]
+             "created_at": j.created_at.isoformat() if j.created_at else None,
+             "params": json.loads(j.params_json or "{}")} for j in jobs]
 
 
 
@@ -99,8 +119,8 @@ def get_job(job_id: int, user: models.User = Depends(current_user),
         raise HTTPException(404, "job not found")
     return {"id": job.id, "kind": job.kind, "status": job.status,
             "output_url": job.output_url, "error": job.error,
-            "credits_charged": job.credits_charged}
-	     "credits_charged": job.credits_charged,"params": json.loads(job.params_json or "{}")}
+            "credits_charged": job.credits_charged,
+            "params": json.loads(job.params_json or "{}")}
 	
 
 
