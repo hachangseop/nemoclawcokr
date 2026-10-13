@@ -78,7 +78,8 @@ class JobReq(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "dev_auth": DEV_AUTH}
+    return {"ok": True, "dev_auth": DEV_AUTH,
+            "provider": "fal" if os.environ.get("FAL_API_KEY") else "stub"}
 
 
 @app.post("/api/v1/estimate")

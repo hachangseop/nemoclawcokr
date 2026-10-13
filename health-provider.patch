@@ -1,0 +1,14 @@
+diff --git a/backend/app/main.py b/backend/app/main.py
+index 682dde3..f2d02c8 100644
+--- a/backend/app/main.py
++++ b/backend/app/main.py
+@@ -78,7 +78,8 @@ class JobReq(BaseModel):
+ 
+ @app.get("/health")
+ def health():
+-    return {"ok": True, "dev_auth": DEV_AUTH}
++    return {"ok": True, "dev_auth": DEV_AUTH,
++            "provider": "fal" if os.environ.get("FAL_API_KEY") else "stub"}
+ 
+ 
+ @app.post("/api/v1/estimate")
