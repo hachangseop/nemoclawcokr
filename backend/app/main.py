@@ -87,6 +87,8 @@ def list_jobs(user: models.User = Depends(current_user), db: Session = Depends(g
     return [{"id": j.id, "kind": j.kind, "status": j.status,
              "output_url": j.output_url, "error": j.error,
              "created_at": j.created_at.isoformat() if j.created_at else None} for j in jobs]
+             "created_at": j.created_at.isoformat() if j.created_at else None,"params": json.loads(j.params_json or "{}")} for j in jobs]
+
 
 
 @app.get("/api/v1/jobs/{job_id}")
@@ -98,6 +100,8 @@ def get_job(job_id: int, user: models.User = Depends(current_user),
     return {"id": job.id, "kind": job.kind, "status": job.status,
             "output_url": job.output_url, "error": job.error,
             "credits_charged": job.credits_charged}
+	     "credits_charged": job.credits_charged,"params": json.loads(job.params_json or "{}")}
+	
 
 
 @app.get("/api/v1/credits/balance")
