@@ -1,5 +1,4 @@
-"""FastAPI 앱. 인증은 DEV 모드(X-User-Email 헤더, 없으면 자동 생성).
-Google OAuth 실연동 전까지의 개발용 방식임을 명시한다."""
+"""FastAPI 앱. 인증: Google OAuth(JWT) 우선, DEV 모드(X-User-Email 헤더) 폴백."""
 import hashlib
 import json
 import logging
@@ -8,12 +7,12 @@ import secrets
 
 from fastapi import FastAPI, Depends, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from .db import get_db, init_db
-from . import models, credits as credit_engine, queue as job_queue, billing
+from . import models, credits as credit_engine, queue as job_queue, billing, auth
 from .providers.fal import get_provider
 
 log = logging.getLogger(__name__)
@@ -61,9 +60,60 @@ def get_user(email: str | None, db: Session) -> models.User:
     return user
 
 
-def current_user(x_user_email: str | None = Header(default=None),
+def current_user(authorization: str | None = Header(default=None),
+                 x_user_email: str | None = Header(default=None),
                  db: Session = Depends(get_db)) -> models.User:
+    # 1) Google OAuth JWT
+    if authorization and authorization.startswith("Bearer "):
+        try:
+            payload = auth.verify_token(authorization[7:])
+            user = db.get(models.User, int(payload["sub"]))
+            if user:
+                return user
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(401, "invalid token")
+    # 2) 개발 모드 폴백 (X-User-Email)
     return get_user(x_user_email, db)
+
+
+@app.get("/api/v1/auth/google/login")
+def google_login():
+    try:
+        return RedirectResponse(auth.google_login_url())
+    except RuntimeError as e:
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/v1/auth/google/callback")
+def google_callback(code: str | None = None, error: str | None = None,
+                    db: Session = Depends(get_db)):
+    if error or not code:
+        raise HTTPException(400, f"google auth failed: {error}")
+    try:
+        tokens = auth.exchange_code(code)
+        info = auth.fetch_userinfo(tokens["access_token"])
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"google token exchange failed: {str(e)[:200]}")
+    email = info.get("email")
+    if not email:
+        raise HTTPException(400, "google did not return email")
+    user, _ = auth.get_or_create_user(db, email, info.get("name"),
+                                      info.get("sub") or "")
+    token = auth.issue_token(user)
+    base = auth.frontend_url()
+    if not base:
+        return {"token": token, "email": user.email,
+                "note": "FRONTEND_URL 미설정 — 토큰 직접 전달 모드"}
+    return RedirectResponse(f"{base}/auth/callback?token={token}")
+
+
+@app.get("/api/v1/auth/me")
+def me(user: models.User = Depends(current_user),
+       db: Session = Depends(get_db)):
+    return {"id": user.id, "email": user.email, "name": user.name,
+            "balance": credit_engine.balance(db, user.id)}
 
 
 class EstimateReq(BaseModel):
